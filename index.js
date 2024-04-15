@@ -1,8 +1,10 @@
 import cors from "cors";
+import dotenv from "dotenv";
 import express from "express";
 import mongoose from "mongoose";
 const app = express();
 const db = mongoose.connection;
+dotenv.config();
 
 import slotsRouter from "./routes/slots.js";
 
@@ -14,23 +16,23 @@ try {
   db.on("error", console.error.bind(console, "connection error"));
 
   db.once("open", function () {
-    console.log("Connected successfully");
+    console.log("Database Connected successfully");
   });
 } catch (err) {
   console.log(err);
 }
 
 app.use(cors({ credentials: true, origin: true }));
-// app.options('*', cors({origin: true, credentials:true}));
+app.options("*", cors({ origin: true, credentials: true }));
 
-app.use(express.json());
 app.use(cookieParser());
-
-app.use("/", slotsRouter);
+app.use(express.json());
+app.use("/slotBooking", slotsRouter);
 
 app.use((err, req, res, next) => {
   const errorStatus = err.status || 500;
   const errorMessage = err.message || "Something went wrong!";
+  console.log(errorMessage, "error message");
   return res.status(errorStatus).json({
     success: false,
     status: errorStatus,
