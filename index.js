@@ -2,6 +2,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
 import mongoose from "mongoose";
+import logger from "morgan";
 const app = express();
 const db = mongoose.connection;
 dotenv.config();
@@ -21,9 +22,14 @@ try {
 } catch (err) {
   console.log(err);
 }
-
-app.use(cors({ credentials: true, origin: true }));
-app.options("*", cors({ origin: true, credentials: true }));
+app.use(logger("dev"));
+var corsOptions = {
+  origin: "http://localhost:3000",
+  optionsSuccessStatus: 200,
+};
+app.use(cors(corsOptions));
+// app.use(cors({ credentials: true, origin: true }));
+app.options(cors({ origin: true, credentials: true }));
 
 app.use(cookieParser());
 app.use(express.json());

@@ -1,6 +1,5 @@
 import moment from "moment";
 import momentTimeZone from "moment-timezone";
-import mongoose from "mongoose";
 import {
   EXB_DURATION_IN_MINUTES_PER_SLOT,
   EXB_END_TIME_IN_UTC,
@@ -12,7 +11,6 @@ import {
 import Exhibitors from "../models/exhibitors.js";
 import Slots from "../models/slots.js";
 import Visitor from "../models/visitor.js";
-const ObjectId = mongoose.Types.ObjectId;
 
 export const listExhibitors = async (req, res) => {
   try {
@@ -118,6 +116,7 @@ export const listSlots = async (req, res) => {
           const b = moment(item?.to).format("YYYY-MM-DD");
           const c = moment(data?.from).format("YYYY-MM-DD");
           const d = moment(item?.from).format("YYYY-MM-DD");
+          //TODO
           return a === b && c === d;
         });
         if (!existingDate) {
@@ -141,7 +140,7 @@ export const listSlots = async (req, res) => {
       return false;
     });
     if (!matchedDateInfo?.length)
-      return res.json({
+      return res.status(200).json({
         success: true,
         message: "No Event in the selected Date",
       });
@@ -224,6 +223,8 @@ export const listSlots = async (req, res) => {
             visitorId: slot?.visitorId,
             slotDate: exbStartDateTimeInLocalZone,
             durationInMinutes: +EXB_DURATION_IN_MINUTES_PER_SLOT,
+            time: slot?.time,
+            slotId: slot?._id,
           });
       } else {
         const slotStartTimeInLocal = moment(
@@ -274,7 +275,9 @@ export const listSlots = async (req, res) => {
 
 export const bookSlot = async (req, res) => {
   try {
-    let { slotDate, eId, visitorId, time, duration, timeZone } = req.body;
+    let { slotDate, eId, visitorId, time, duration, timeZone, status } =
+      req.body;
+    const slotId = req.body?.slotId;
 
     const visitorInfo = await Visitor.findOne({ _id: visitorId });
 
@@ -284,11 +287,10 @@ export const bookSlot = async (req, res) => {
       visitorId,
       visitorName: parsedVisitorInfo?.name,
       durationInMinutes: duration,
-      status: "pending",
+      status,
       bookedTimeZone: timeZone,
       time,
     };
-    //TODO take visitor name fro
 
     slotDate = moment(time).format("YYYY-MM-DD");
 
@@ -317,7 +319,7 @@ export const bookSlot = async (req, res) => {
         moment(slotStartDateTimeInUTC).format("YYYY-MM-DD")
       );
     });
-    if (!isDateExists) {
+    if (!isDateExists && status === "pending") {
       const date = {
         to: slotEndDateTimeInUTC,
         from: slotStartDateTimeInUTC,
@@ -333,7 +335,7 @@ export const bookSlot = async (req, res) => {
           },
         }
       );
-    } else {
+    } else if (status === "pending") {
       const response = await Slots.updateOne(
         {
           eid: eId,
@@ -349,15 +351,47 @@ export const bookSlot = async (req, res) => {
           strict: false,
         }
       );
+      const a = response;
+    } else {
+      // slotStartDateTimeInUTC
+      const response = await Slots.updateOne(
+        {
+          eid: eId,
+          dates: {
+            $elemMatch: {
+              from: slotStartDateTimeInUTC,
+              "slots._id": slotId,
+            },
+          },
+        },
+        {
+          $pull: {
+            "dates.$[element].slots": {
+              _id: slotId,
+            },
+          },
+        },
+        {
+          arrayFilters: [
+            { "element.from": slotStartDateTimeInUTC },
+            // { "slot._id": slotId },
+          ],
+          upsert: true,
+          strict: false,
+        }
+      );
     }
 
-    res.json({ success: true, message: "Slot Booked" });
+    res.status(200).json({ success: true, message: "Slot Booked" });
   } catch (err) {
     console.log(err);
-    res.json({
-      success: false,
-      message: err?.message || "Something went wrong",
-    });
+    res
+      .status(200)
+      .status(500)
+      .json({
+        success: false,
+        message: err?.message || "Something went wrong",
+      });
   }
 };
 
@@ -370,7 +404,7 @@ export const listBookedSlots = async (req, res) => {
       { $match: { "dates.slots.visitorId": visitorId } },
       { $project: { slot: "$dates.slots", companyName: "$companyName" } },
     ]);
-    if (!slots) return res.json({ success: true, slots: [] });
+    if (!slots) return res.status(200).json({ success: true, slots: [] });
     let SerialNo = 0;
     const formattedSlots = slots.map((item) => {
       const dateInBookedTimeZone = momentTimeZone(item?.slot?.time)
@@ -390,10 +424,10 @@ export const listBookedSlots = async (req, res) => {
       };
     });
 
-    return res.json({ success: true, bookings: formattedSlots });
+    return res.status(200).json({ success: true, bookings: formattedSlots });
   } catch (err) {
     console.log(err);
-    return res.json({
+    return res.status(500).json({
       success: false,
       message: err?.message || "Something went wrong",
     });
@@ -410,7 +444,7 @@ export const getExhibitionDate = (req, res) => {
     .tz(timeZone)
     .format("YYYY-MM-DD");
 
-  return res.json({
+  return res.status(200).json({
     success: true,
     data: {
       startDate: slotStartDateTimeInRequestedTimeZone,
@@ -468,13 +502,13 @@ export const getVisitorsList = async (req, res) => {
         };
         return result;
       });
-      return res.json({ success: true, data: formattedReponse });
+      return res.status(200).json({ success: true, data: formattedReponse });
     } else {
-      return res.json({ success: true, data: [] });
+      return res.status(200).json({ success: true, data: [] });
     }
   } catch (err) {
     console.log(er);
-    return res.json({
+    return res.status(500).json({
       success: false,
       message: err?.message || "Something went wrong",
     });
@@ -484,25 +518,60 @@ export const getVisitorsList = async (req, res) => {
 export const changeStatus = async (req, res) => {
   try {
     const { eId, slotId, dateId, status } = req.body;
-    const response = await Slots.updateOne(
-      {
-        eid: eId,
-      },
-      {
-        $set: {
-          "dates.$[element].slots.$[j].status": status,
+    if (status == "rejected") {
+      //todo if rejected delete the collection
+      const response = await Slots.updateOne(
+        {
+          eid: eId,
+          dates: {
+            $elemMatch: {
+              _id: dateId,
+              "slots._id": slotId,
+            },
+          },
         },
-      },
-      {
-        arrayFilters: [{ "element._id": dateId }, { "j._id": slotId }],
-        upsert: true,
-        strict: false,
-      }
-    );
-    return res.json({ success: true, message: "Status updated successfully" });
+        {
+          $pull: {
+            "dates.$[element].slots": {
+              _id: slotId,
+            },
+          },
+        },
+        {
+          arrayFilters: [
+            { "element._id": dateId },
+            // { "slot._id": slotId },
+          ],
+          upsert: true,
+          strict: false,
+        }
+      );
+    } else {
+      const response = await Slots.updateOne(
+        {
+          eid: eId,
+        },
+        {
+          $set: {
+            "dates.$[element].slots.$[j].status": status,
+          },
+        },
+        {
+          arrayFilters: [{ "element._id": dateId }, { "j._id": slotId }],
+          upsert: true,
+          strict: false,
+        }
+      );
+    }
+    // }else{
+
+    // }
+    return res
+      .status(200)
+      .json({ success: true, message: "Status updated successfully" });
   } catch (err) {
     console.log(err);
-    return res.json({
+    return res.status(500).json({
       success: false,
       message: err?.message || "Something went wrong",
     });
