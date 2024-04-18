@@ -48,7 +48,9 @@ export const listSlots = async (req, res) => {
     const response = await Slots.findOne({ eid: id });
     const parsedResponse = JSON.parse(JSON.stringify(response));
     let slotInfo = parsedResponse;
-    let newDates = [...(slotInfo?.dates || [])];
+    let newDates = slotInfo?.dates?.length
+      ? JSON.parse(JSON.stringify(slotInfo?.dates))
+      : [];
     if (parsedResponse == null) {
       const exhibitorInfoResponse = await Exhibitors.findOne({ _id: id });
       const parsedExbInfo = JSON.parse(JSON.stringify(exhibitorInfoResponse));
@@ -81,6 +83,7 @@ export const listSlots = async (req, res) => {
       const response = await Slots.insertMany(exbInfo);
       const parsedResponse = JSON.parse(JSON.stringify(response));
       slotInfo = parsedResponse[0];
+      newDates = [...newDates, ...exbInfo.dates];
     } else {
       const exhibitorInfoResponse = await Exhibitors.findOne({ _id: id });
       const parsedExbInfo = JSON.parse(JSON.stringify(exhibitorInfoResponse));
@@ -124,6 +127,14 @@ export const listSlots = async (req, res) => {
         }
       }
     }
+    const updateResponse = await Slots.updateOne(
+      { eid: id },
+      {
+        $set: {
+          dates: newDates,
+        },
+      }
+    );
     const matchedDateInfo = newDates?.filter((data) => {
       const from = momentTimeZone(data?.from)
         .tz(requestedTimeZone)
