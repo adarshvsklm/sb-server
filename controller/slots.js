@@ -11,6 +11,7 @@ import {
 import Exhibitors from "../models/exhibitors.js";
 import Slots from "../models/slots.js";
 import Visitor from "../models/visitor.js";
+import { ObjectId } from "mongodb";
 
 export const listExhibitors = async (req, res) => {
   try {
@@ -336,7 +337,7 @@ export const bookSlot = async (req, res) => {
         from: slotStartDateTimeInUTC,
         slots: slot,
       };
-      const response = await Slots.updateOne(
+      await Slots.updateOne(
         {
           eid: eId,
         },
@@ -347,7 +348,7 @@ export const bookSlot = async (req, res) => {
         }
       );
     } else if (status === "pending") {
-      const response = await Slots.updateOne(
+      await Slots.updateOne(
         {
           eid: eId,
         },
@@ -362,7 +363,6 @@ export const bookSlot = async (req, res) => {
           strict: false,
         }
       );
-      const a = response;
     } else {
       // slotStartDateTimeInUTC
       const response = await Slots.updateOne(
@@ -415,9 +415,19 @@ export const listBookedSlots = async (req, res) => {
       { $match: { "dates.slots.visitorId": visitorId } },
       { $project: { slot: "$dates.slots", companyName: "$companyName" } },
     ]);
-    if (!slots) return res.status(200).json({ success: true, slots: [] });
+    const rejectedSlots = await Slots.aggregate([
+      { $unwind: { path: "$myBookings" } },
+      { $match: { $and: [{ "myBookings.visitorId": visitorId }, { "myBookings.status": 'rejected' }] } },
+      { $project: { slot: "$myBookings", companyName: "$companyName" } }
+    ])
+
+
+    if (!slots && !rejectedSlots) return res.status(200).json({ success: true, slots: [] });
+    let allSlots = []
+    if (slots) allSlots = [...allSlots, ...slots]
+    if (rejectedSlots) allSlots = [...allSlots, ...rejectedSlots]
     let SerialNo = 0;
-    const formattedSlots = slots.map((item) => {
+    const formattedSlots = allSlots?.map((item) => {
       const dateInBookedTimeZone = momentTimeZone(item?.slot?.time)
         .tz(item.slot?.bookedTimeZone)
         .format("YYYY-MM-DD");
@@ -491,7 +501,7 @@ export const getVisitorsList = async (req, res) => {
     ]);
     if (response) {
       let SerialNo = 0;
-      const formattedReponse = response.map((item) => {
+      let formattedReponse = response.map((item) => {
         const dateInBookedTimeZone = momentTimeZone(item?.time)
           .tz(item?.bookedTimeZone)
           .format("YYYY-MM-DD");
@@ -512,13 +522,33 @@ export const getVisitorsList = async (req, res) => {
           slotId: item?.slotId,
         };
         return result;
-      });
+      }).filter((item) => {
+        return item?.status !== 'booked'
+      })
+      const bookings = await Slots.findOne({ eid: id })
+      let parsedBookings = JSON.parse(JSON.stringify(bookings));
+      if (parsedBookings && parsedBookings?.myBookings) {
+        parsedBookings = parsedBookings?.myBookings?.map((item) => {
+          const dateInBookedTimeZone = momentTimeZone(item?.time)
+            .tz(item?.bookedTimeZone)
+            .format("YYYY-MM-DD");
+          const timeInBookedTimeZone = momentTimeZone(item?.time)
+            .tz(item?.bookedTimeZone)
+            .format("HH:mm");
+          SerialNo++
+          return {
+            SerialNo, ...item, time: timeInBookedTimeZone,
+            date: dateInBookedTimeZone,
+          }
+        })
+        formattedReponse = [...formattedReponse, ...parsedBookings.reverse()];
+      }
       return res.status(200).json({ success: true, data: formattedReponse });
     } else {
       return res.status(200).json({ success: true, data: [] });
     }
   } catch (err) {
-    console.log(er);
+    console.log(err);
     return res.status(500).json({
       success: false,
       message: err?.message || "Something went wrong",
@@ -529,8 +559,43 @@ export const getVisitorsList = async (req, res) => {
 export const changeStatus = async (req, res) => {
   try {
     const { eId, slotId, dateId, status } = req.body;
+    // const dates = await Slots.aggregate([{ $unwind: { path: "$dates" } }]);
+
+    const response = await Slots.aggregate([
+      { $match: { eid: eId } },
+      { $unwind: { path: "$dates" } },
+      { $unwind: { path: "$dates.slots" } },
+      { $match: { "dates.slots._id": new ObjectId(slotId) } },
+      {
+        $project: {
+          name: "$dates.slots.visitorName",
+          visitorId: "$dates.slots.visitorId",
+          bookedTimeZone: "$dates.slots.bookedTimeZone",
+          status: "$dates.slots.status",
+          time: "$dates.slots.time",
+          dateId: "$dates._id",
+          slotId: "$dates.slots._id",
+        },
+      },
+    ])
+    const slot = { ...response[0], status }
+    delete slot._id
+    await Slots.updateOne(
+      {
+        eid: eId
+      },
+      {
+        $push: {
+          myBookings: slot
+        }
+      },
+      {
+        upsert: true,
+        strict: false
+      }
+
+    )
     if (status == "rejected") {
-      //todo if rejected delete the collection
       const response = await Slots.updateOne(
         {
           eid: eId,
